@@ -357,6 +357,16 @@ table.dvt tr.lunch-row td.td-time{background:#111917}
 </div>
 </div>
 <div class="toast" id="toast"></div>
+<div id="loader" style="position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;gap:14px">
+  <div style="font-family:'Syne',sans-serif;font-weight:800;font-size:24px;color:var(--acc)">PLAN<span style="color:var(--text);font-weight:400">board</span></div>
+  <div style="font-size:12px;color:var(--muted)">Loading shared data…</div>
+  <div style="width:140px;height:3px;background:var(--border);border-radius:2px;overflow:hidden">
+    <div style="height:100%;background:var(--acc);border-radius:2px;animation:loadbar 1.4s ease-in-out infinite"></div>
+  </div>
+</div>
+<style>
+@keyframes loadbar{0%{width:0%;margin-left:0}50%{width:60%;margin-left:20%}100%{width:0%;margin-left:100%}}
+</style>
 
 <script>
 // ══════════════════════════════════════════════════
@@ -378,7 +388,11 @@ const SWATCHES = ['#3d7aed','#9b59b6','#1abc9c','#f39c12','#e74c3c','#2ecc71',
                   '#4a90d9','#e056a0'];
 // Each slot = 0.5 hrs
 const HRS_PER_SLOT = 0.5;
-const STORE = 'planboard_v4';
+
+// ── JSONBin cloud sync ──
+const BIN_ID  = '69eea5d3aaba8821973ec7e6';
+const BIN_KEY = '$2a$10$uTBmmqxrkJv/vJUdyX9XIu3bb88kyRjLZqAZ2wDqx4xpO6l.uW8xS';
+const BIN_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
 
 // ══════════════════════════════════════════════════
 // STATE
@@ -423,41 +437,132 @@ function calcProjectHours(projName){
 }
 
 // ══════════════════════════════════════════════════
-// STORAGE
+// CLOUD SYNC  (JSONBin)
 // ══════════════════════════════════════════════════
 let saveTimer = null;
+let lastSavedHash = '';
+let pollTimer = null;
+let isSaving = false;
+
+function dataHash(){ return JSON.stringify({w:S.weeks,s:S.staff,p:S.projects}); }
+
+function setStatus(state, msg){
+  const dot = document.getElementById('sdot');
+  const lbl = document.getElementById('slbl');
+  dot.className = 'sdot ' + state;
+  lbl.textContent = msg;
+}
+
 function dirty(){
-  document.getElementById('sdot').className='sdot dirty';
-  document.getElementById('slbl').textContent='Unsaved';
+  setStatus('dirty','Unsaved');
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(save, 1400);
+  saveTimer = setTimeout(pushData, 1600);
 }
-function save(){
+
+async function pushData(){
+  if(isSaving) return;
+  isSaving = true;
+  setStatus('dirty','Saving…');
   try{
-    localStorage.setItem(STORE, JSON.stringify({weeks:S.weeks,staff:S.staff,projects:S.projects}));
-    document.getElementById('sdot').className='sdot ok';
-    document.getElementById('slbl').textContent='Saved';
-  } catch(e){ toast('Save failed'); }
-}
-function load(){
-  try{ const r=localStorage.getItem(STORE); if(r) return JSON.parse(r); } catch(e){}
-  return null;
-}
-function init(){
-  const saved = load();
-  if(saved && saved.weeks && saved.weeks.length){
-    Object.assign(S, saved);
-  } else {
-    S.staff = [
-      {id:'s1',name:'Alan',  color:'#e8ff47',visible:true},
-      {id:'s2',name:'Andrew',color:'#57c8ff',visible:true},
-      {id:'s3',name:'David', color:'#ff9f57',visible:true},
-      {id:'s4',name:'John',  color:'#c879ff',visible:true},
-    ];
-    S.projects = []; // ← empty by default, user creates their own
-    S.weeks = [blankWeek('Week 1','')];
-    save();
+    const body = JSON.stringify({ weeks:S.weeks, staff:S.staff, projects:S.projects });
+    const res = await fetch(BIN_URL, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Access-Key': BIN_KEY,
+        'X-Bin-Versioning': 'false'
+      },
+      body
+    });
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    lastSavedHash = dataHash();
+    setStatus('ok','Saved');
+  } catch(e){
+    setStatus('dirty','Save failed — retrying…');
+    saveTimer = setTimeout(pushData, 4000);
+  } finally {
+    isSaving = false;
   }
+}
+
+async function pullData(){
+  try{
+    const res = await fetch(BIN_URL + '/latest', {
+      headers: { 'X-Access-Key': BIN_KEY }
+    });
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    const json = await res.json();
+    const remote = json.record;
+    if(!remote || !remote.weeks) return;
+    const remoteHash = JSON.stringify(remote);
+    // Only update if remote data differs from what we have AND we're not mid-edit
+    if(remoteHash !== lastSavedHash && !isSaving && !saveTimer){
+      Object.assign(S, remote);
+      lastSavedHash = remoteHash;
+      renderSidebar();
+      renderMain();
+      setStatus('ok','Synced');
+    }
+  } catch(e){
+    // silent — don't disrupt the user on poll failure
+  }
+}
+
+function startPolling(){
+  // Poll every 15 seconds so all users see each other's changes
+  pollTimer = setInterval(pullData, 15000);
+}
+
+async function init(){
+  setStatus('dirty','Loading…');
+  try{
+    const res = await fetch(BIN_URL + '/latest', {
+      headers: { 'X-Access-Key': BIN_KEY }
+    });
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    const json = await res.json();
+    const remote = json.record;
+    if(remote && remote.weeks && remote.weeks.length){
+      Object.assign(S, remote);
+      lastSavedHash = JSON.stringify(remote);
+      setStatus('ok','Loaded');
+    } else {
+      // First time — seed with default staff, empty projects & one blank week
+      S.staff = [
+        {id:'s1',name:'Alan',  color:'#e8ff47',visible:true},
+        {id:'s2',name:'Andrew',color:'#57c8ff',visible:true},
+        {id:'s3',name:'David', color:'#ff9f57',visible:true},
+        {id:'s4',name:'John',  color:'#c879ff',visible:true},
+      ];
+      S.projects = [];
+      S.weeks = [blankWeek('Week 1','')];
+      await pushData();
+    }
+  } catch(e){
+    setStatus('dirty','Offline — changes save locally');
+    // Fallback to localStorage if JSONBin unreachable
+    try{
+      const r = localStorage.getItem('planboard_fallback');
+      if(r){ const d=JSON.parse(r); if(d.weeks) Object.assign(S,d); }
+    } catch(e2){}
+    if(!S.weeks.length){
+      S.staff=[{id:'s1',name:'Alan',color:'#e8ff47',visible:true}];
+      S.projects=[]; S.weeks=[blankWeek('Week 1','')];
+    }
+  }
+  renderSidebar();
+  renderMain();
+  startPolling();
+  // Hide loading screen
+  const loader = document.getElementById('loader');
+  if(loader) loader.style.display = 'none';
+}
+
+// Fallback: also mirror to localStorage in case of network issues
+const _origPush = pushData;
+async function save(){
+  try{ localStorage.setItem('planboard_fallback', JSON.stringify({weeks:S.weeks,staff:S.staff,projects:S.projects})); } catch(e){}
+  await pushData();
 }
 
 // ══════════════════════════════════════════════════
@@ -1106,9 +1211,7 @@ function doImport(){
 // ══════════════════════════════════════════════════
 // BOOT
 // ══════════════════════════════════════════════════
-init();
-renderSidebar();
-renderMain();
+init(); // async — renders sidebar + main after data loads
 </script>
 </body>
 </html>
