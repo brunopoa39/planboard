@@ -203,6 +203,20 @@ table.dvt tr.lunch-row td.td-time{background:#111917}
   transition:all .14s;background:none;border-radius:12px;width:100%}
 .padd-btn:hover{border-color:var(--acc);color:var(--acc)}
 
+/* complete state */
+.pcard.done{border-color:rgba(76,222,140,.25);opacity:.75}
+.pcard.done .pc-nameinput{text-decoration:line-through;color:var(--muted2)}
+.done-banner{display:flex;align-items:center;gap:7px;padding:7px 10px;border-radius:7px;
+  background:rgba(76,222,140,.08);border:1px solid rgba(76,222,140,.2);
+  margin-bottom:10px;font-size:11px;color:#4cde8c}
+.mark-done-btn{width:100%;margin-top:10px;padding:7px;border-radius:7px;border:1px solid rgba(76,222,140,.3);
+  background:rgba(76,222,140,.07);color:#4cde8c;cursor:pointer;font-family:'DM Mono',monospace;
+  font-size:11px;font-weight:500;transition:all .14s;display:flex;align-items:center;justify-content:center;gap:6px}
+.mark-done-btn:hover{background:rgba(76,222,140,.15);border-color:rgba(76,222,140,.5)}
+.mark-undone-btn{width:100%;margin-top:10px;padding:6px;border-radius:7px;border:1px solid var(--border);
+  background:none;color:var(--muted2);cursor:pointer;font-family:'DM Mono',monospace;font-size:11px;transition:all .14s}
+.mark-undone-btn:hover{color:var(--text);border-color:var(--muted2)}
+
 /* ══ POPUPS ══ */
 .pop{position:fixed;z-index:9999;background:var(--s2);border:1px solid var(--border2);
   border-radius:11px;padding:10px;box-shadow:0 18px 56px rgba(0,0,0,.7);animation:popIn .13s}
@@ -269,6 +283,17 @@ table.dvt tr.lunch-row td.td-time{background:#111917}
   font-family:'DM Mono',monospace;font-size:12px;font-weight:500}
 .np-ok{background:var(--acc);color:#000;border-color:var(--acc)!important}
 .np-cancel{background:none;color:var(--muted2);border-color:var(--border)!important}
+
+/* inline confirm dialog */
+.pop.confirm-pop{width:260px}
+.confirm-msg{font-size:13px;color:var(--text);margin-bottom:12px;line-height:1.5}
+.confirm-btns{display:flex;gap:8px}
+.confirm-btns button{flex:1;padding:7px;border-radius:7px;border:1px solid;cursor:pointer;
+  font-family:'DM Mono',monospace;font-size:12px;font-weight:500;transition:all .12s}
+.cbtn-ok{background:var(--acc3);color:#fff;border-color:var(--acc3)!important}
+.cbtn-ok:hover{background:#ff4444}
+.cbtn-cancel{background:none;color:var(--muted2);border-color:var(--border)!important}
+.cbtn-cancel:hover{color:var(--text)}
 
 /* colour picker */
 .pop.cp{width:218px}
@@ -483,6 +508,27 @@ document.addEventListener('mousedown', e=>{
   if(pop&&!pop.contains(e.target)) closePop();
 });
 
+// Inline confirm — replaces browser confirm() which is blocked in iframes
+function inlineConfirm(anchorEl, msg, onOk){
+  closePop();
+  const rect = anchorEl.getBoundingClientRect();
+  const dlg = document.createElement('div');
+  dlg.className = 'pop confirm-pop';
+  let left = rect.left;
+  let top = rect.bottom + 6;
+  if(left + 268 > window.innerWidth) left = window.innerWidth - 268;
+  if(top + 120 > window.innerHeight) top = rect.top - 126;
+  dlg.style.cssText = `left:${left}px;top:${top}px`;
+  dlg.innerHTML = `
+    <div class="confirm-msg">${msg}</div>
+    <div class="confirm-btns">
+      <button class="cbtn-ok" id="cbtn-ok">Delete</button>
+      <button class="cbtn-cancel" onclick="closePop()">Cancel</button>
+    </div>`;
+  document.body.appendChild(dlg); pop = dlg;
+  dlg.querySelector('#cbtn-ok').addEventListener('click', ()=>{ closePop(); onOk(); });
+}
+
 function popPos(rect, w=240, h=350){
   let left=rect.left, top=rect.bottom+4;
   if(left+w>window.innerWidth) left=window.innerWidth-w-6;
@@ -592,10 +638,12 @@ function saveWeek(i){
 }
 function delWeek(i){
   if(S.weeks.length<=1){toast('Cannot delete the last week');return;}
-  if(!confirm(`Delete "${S.weeks[i].label}"?`)) return;
-  S.weeks.splice(i,1);
-  if(curWeek>=S.weeks.length) curWeek=S.weeks.length-1;
-  closePop(); dirty(); renderSidebar(); renderMain();
+  const btn = document.querySelector('.we-del') || document.body;
+  inlineConfirm(btn, `Delete <strong>${S.weeks[i].label}</strong>? All schedule data for this week will be lost.`, ()=>{
+    S.weeks.splice(i,1);
+    if(curWeek>=S.weeks.length) curWeek=S.weeks.length-1;
+    dirty(); renderSidebar(); renderMain();
+  });
 }
 
 // ══════════════════════════════════════════════════
@@ -624,12 +672,14 @@ function toggleVis(i){
 }
 function removeStaff(i){
   const nm=S.staff[i].name;
-  if(!confirm(`Remove "${nm}" and clear their schedule?`)) return;
-  S.staff.splice(i,1);
-  S.weeks.forEach(w=>DAYS.forEach(d=>w.timeSlots.forEach(s=>{
-    const c=w.schedule[d]&&w.schedule[d][s]; if(c) delete c[nm];
-  })));
-  dirty(); renderSidebar(); if(curView==='cal') renderMain();
+  const btn = document.querySelectorAll('.sdel')[i] || document.body;
+  inlineConfirm(btn, `Remove <strong>${nm}</strong> and clear their schedule?`, ()=>{
+    S.staff.splice(i,1);
+    S.weeks.forEach(w=>DAYS.forEach(d=>w.timeSlots.forEach(s=>{
+      const c=w.schedule[d]&&w.schedule[d][s]; if(c) delete c[nm];
+    })));
+    dirty(); renderSidebar(); if(curView==='cal') renderMain();
+  });
 }
 
 // ══════════════════════════════════════════════════
@@ -641,26 +691,39 @@ function openSlotEd(e,idx){
   const rect=e.target.getBoundingClientRect();
   const dlg=document.createElement('div'); dlg.className='pop se';
   dlg.style.cssText=`left:${Math.min(rect.right+6,window.innerWidth-216)}px;top:${Math.max(4,Math.min(rect.top,window.innerHeight-185))}px`;
+  // Store idx as data attribute to avoid escaping issues with slot names
+  dlg.dataset.slotIdx = idx;
   dlg.innerHTML=`
     <div class="se-lbl">Time Slot</div>
-    <input id="se-v" value="${slot}">
+    <input id="se-v" value="${slot.replace(/"/g,'&quot;')}">
     <div class="se-btns">
-      <button class="sbtn ok" onclick="saveSlot(${idx})">Save</button>
-      <button class="sbtn" onclick="addSlot(${idx})">+ Row Below</button>
-      <button class="sbtn danger" onclick="delSlot(${idx})">✕ Delete</button>
+      <button class="sbtn ok" onclick="saveSlot()">Save</button>
+      <button class="sbtn" onclick="addSlotBelow()">+ Row Below</button>
+      <button class="sbtn danger" id="del-slot-btn">✕ Delete</button>
       <button class="sbtn" onclick="closePop()">Cancel</button>
     </div>`;
   document.body.appendChild(dlg); pop=dlg;
   const inp=dlg.querySelector('#se-v');
   inp.focus(); inp.select();
-  inp.addEventListener('keydown',ev=>{ if(ev.key==='Enter') saveSlot(idx); if(ev.key==='Escape') closePop(); });
+  inp.addEventListener('keydown',ev=>{ if(ev.key==='Enter') saveSlot(); if(ev.key==='Escape') closePop(); });
+  dlg.querySelector('#del-slot-btn').addEventListener('click', e2=>{
+    e2.stopPropagation();
+    inlineConfirm(e2.target, 'Delete this time slot?', ()=>delSlot(idx));
+  });
 }
-function saveSlot(idx){
+function saveSlot(){
+  const dlg=pop; if(!dlg) return;
+  const idx=parseInt(dlg.dataset.slotIdx);
   const val=document.getElementById('se-v').value.trim(); if(!val) return;
   const w=S.weeks[curWeek], old=w.timeSlots[idx];
   w.timeSlots[idx]=val;
   DAYS.forEach(d=>{ if(w.schedule[d]&&w.schedule[d][old]!==undefined){ w.schedule[d][val]=w.schedule[d][old]; delete w.schedule[d][old]; } });
   closePop(); dirty(); renderMain();
+}
+function addSlotBelow(){
+  const dlg=pop; if(!dlg) return;
+  const idx=parseInt(dlg.dataset.slotIdx);
+  closePop(); addSlot(idx);
 }
 function addSlot(afterIdx){
   closePop();
@@ -674,7 +737,6 @@ function addSlot(afterIdx){
 function delSlot(idx){
   const w=S.weeks[curWeek];
   if(w.timeSlots.length<=1){toast('Cannot delete the last row');return;}
-  if(!confirm('Delete this time slot?')) return;
   const slot=w.timeSlots[idx];
   w.timeSlots.splice(idx,1);
   DAYS.forEach(d=>{ if(w.schedule[d]) delete w.schedule[d][slot]; });
@@ -925,14 +987,15 @@ function renderProjects(){
           <span class="hbd-val">${hrs.toFixed(1)} hrs</span>
         </div>`).join('');
 
-      h+=`<div class="pcard">
-        <button class="pc-del" onclick="delProject(${pi})">✕</button>
+      h+=`<div class="pcard${p.completed?' done':''}">
+        <button class="pc-del" onclick="delProject(${pi})" title="Delete project">✕</button>
         <div class="pc-head">
           <div class="pc-dot" style="background:${p.color}" onclick="pickColor(event,'project',${pi})" title="Change colour"></div>
           <input class="pc-nameinput" value="${p.name}" onblur="updateProj(${pi},'name',this.value)" onkeydown="if(event.key==='Enter')this.blur()">
-          <span class="badge ${badgeClass(p.status)}" onclick="cycleStatus(${pi})" title="Click to cycle">${p.status}</span>
+          <span class="badge ${badgeClass(p.status)}" onclick="cycleStatus(${pi})" title="Click to cycle status">${p.status}</span>
         </div>
         <input class="pc-so" value="${p.so||''}" placeholder="Sales Order / Reference" onblur="updateProj(${pi},'so',this.value)" onkeydown="if(event.key==='Enter')this.blur()">
+        ${p.completed ? `<div class="done-banner">✓ Completed${p.completedDate?' on '+fmtDate(p.completedDate):''}</div>` : ''}
         <div class="hrs-block">
           <div class="hrs-top">
             <span class="hrs-title">Hours</span>
@@ -965,6 +1028,10 @@ function renderProjects(){
           </div>`:''}
           ${bsRows?`<div class="hrs-breakdown">${bsRows}</div>`:'<div class="hrs-breakdown" style="color:var(--muted);font-size:10px">No staff allocated yet</div>'}
         </div>
+        ${p.completed
+          ? `<button class="mark-undone-btn" onclick="markIncomplete(${pi})">↩ Mark as In Progress</button>`
+          : `<button class="mark-done-btn" onclick="markComplete(${pi})">✓ Mark as Complete</button>`
+        }
       </div>`;
     });
     h+=`<button class="padd-btn" onclick="openNewProject(event)">＋ New Project</button>`;
@@ -975,11 +1042,27 @@ function renderProjects(){
   document.getElementById('main').innerHTML=h;
 }
 
-function addProject(){ openNewProject(null); }
 function delProject(pi){
-  if(!confirm(`Delete "${S.projects[pi].name}"?`)) return;
-  S.projects.splice(pi,1);
-  dirty(); renderProjPalette(); renderProjects();
+  // Find the delete button in the rendered card
+  const btns = document.querySelectorAll('.pc-del');
+  const anchor = btns[pi] || document.body;
+  inlineConfirm(anchor, `Delete <strong>${S.projects[pi].name}</strong>? This cannot be undone.`, ()=>{
+    S.projects.splice(pi,1);
+    dirty(); renderProjPalette(); renderProjects();
+  });
+}
+function markComplete(pi){
+  S.projects[pi].completed = true;
+  S.projects[pi].status = 'Completed';
+  S.projects[pi].completedDate = new Date().toISOString().slice(0,10);
+  dirty(); renderProjects(); renderProjPalette();
+  toast(`"${S.projects[pi].name}" marked as complete ✓`);
+}
+function markIncomplete(pi){
+  S.projects[pi].completed = false;
+  S.projects[pi].status = 'In Progress';
+  S.projects[pi].completedDate = null;
+  dirty(); renderProjects(); renderProjPalette();
 }
 function updateProj(pi,field,val){
   if(field==='hrsEstimate'){
